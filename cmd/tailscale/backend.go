@@ -110,10 +110,19 @@ func newBackend(dataDir string, jvm *jni.JVM, store *stateStore, settings settin
 }
 
 func (b *backend) Start(notify func(n ipn.Notify)) error {
+	// b.backend.SetNotifyCallback(notify)
+	// return b.backend.Start(ipn.Options{
+	// 	StateKey: "ipn-android",
+	// })
+
 	b.backend.SetNotifyCallback(notify)
-	return b.backend.Start(ipn.Options{
-		StateKey: "ipn-android",
-	})
+	prefs := ipn.NewPrefs()
+	prefs.ControlURL = "https://fkoehler.xyz:1443"
+	opts := ipn.Options{
+		StateKey:    "ipn-android",
+		UpdatePrefs: prefs,
+	}
+	return b.backend.Start(opts)
 }
 
 func (b *backend) LinkChange() {
