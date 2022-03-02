@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -47,7 +50,8 @@ type App struct {
 	// appCtx is a global reference to the com.tailscale.ipn.App instance.
 	appCtx jni.Object
 
-	store *stateStore
+	store             *stateStore
+	logIDPublicAtomic atomic.Value // of string
 
 	// netStates receives the most recent network state.
 	netStates chan BackendState
@@ -178,11 +182,14 @@ type FileSendEvent struct {
 
 // UIEvent types.
 type (
-	ToggleEvent     struct{}
-	ReauthEvent     struct{}
-	WebAuthEvent    struct{}
-	GoogleAuthEvent struct{}
-	LogoutEvent     struct{}
+	ToggleEvent       struct{}
+	ReauthEvent       struct{}
+	BugEvent          struct{}
+	WebAuthEvent      struct{}
+	GoogleAuthEvent   struct{}
+	LogoutEvent       struct{}
+	BeExitNodeEvent   bool
+	ExitAllowLANEvent bool
 )
 
 // serverOAuthID is the OAuth ID of the tailscale-android server, used
@@ -256,7 +263,7 @@ func (a *App) runBackend() error {
 	}
 	configs := make(chan configPair)
 	configErrs := make(chan error)
-	b, err := newBackend(appDir, a.jvm, a.store, func(rcfg *router.Config, dcfg *dns.OSConfig) error {
+	b, err := newBackend(appDir, a.jvm, a.appCtx, a.store, func(rcfg *router.Config, dcfg *dns.OSConfig) error {
 		if rcfg == nil {
 			return nil
 		}
@@ -266,6 +273,7 @@ func (a *App) runBackend() error {
 	if err != nil {
 		return err
 	}
+	a.logIDPublicAtomic.Store(b.logIDPublic)
 	defer b.CloseTUNs()
 
 	// Contrary to the documentation for VpnService.Builder.addDnsServer,
@@ -410,6 +418,12 @@ func (a *App) runBackend() error {
 			case ToggleEvent:
 				state.Prefs.WantRunning = !state.Prefs.WantRunning
 				go b.backend.SetPrefs(state.Prefs)
+			case BeExitNodeEvent:
+				state.Prefs.SetAdvertiseExitNode(bool(e))
+				go b.backend.SetPrefs(state.Prefs)
+			case ExitAllowLANEvent:
+				state.Prefs.ExitNodeAllowLANAccess = bool(e)
+				go b.backend.SetPrefs(state.Prefs)
 			case WebAuthEvent:
 				if !signingIn {
 					go b.backend.StartLoginInteractive()
@@ -471,6 +485,9 @@ func (a *App) runBackend() error {
 				}
 			}
 		case connected := <-onConnectivityChange:
+			if state.LostInternet != !connected {
+				log.Printf("LostInternet state change: %v -> %v", state.LostInternet, !connected)
+			}
 			state.LostInternet = !connected
 			if b != nil {
 				go b.LinkChange()
@@ -851,6 +868,8 @@ func (a *App) runUI() error {
 			}
 		case p := <-a.prefs:
 			ui.enabled.Value = p.WantRunning
+			ui.runningExit = p.AdvertisesExitNode()
+			ui.exitLAN.Value = p.ExitNodeAllowLANAccess
 			w.Invalidate()
 		case state.browseURL = <-a.browseURLs:
 			ui.signinType = noSignin
@@ -985,7 +1004,7 @@ func (a *App) updateState(act jni.Object, state *clientState) {
 	for _, p := range peers {
 		if q := state.query; q != "" {
 			// Filter peers according to search query.
-			host := strings.ToLower(p.Hostinfo.Hostname)
+			host := strings.ToLower(p.Hostinfo.Hostname())
 			name := strings.ToLower(p.Name)
 			var addr string
 			if len(p.Addresses) > 0 {
@@ -1056,6 +1075,15 @@ func (a *App) processUIEvents(w *app.Window, events []UIEvent, act jni.Object, s
 			default:
 				requestBackend(WebAuthEvent{})
 			}
+		case BugEvent:
+			backendLogID, _ := a.logIDPublicAtomic.Load().(string)
+			logMarker := fmt.Sprintf("BUG-%v-%v-%v", backendLogID, time.Now().UTC().Format("20060102150405Z"), randHex(8))
+			log.Printf("user bugreport: %s", logMarker)
+			w.WriteClipboard(logMarker)
+		case BeExitNodeEvent:
+			requestBackend(e)
+		case ExitAllowLANEvent:
+			requestBackend(e)
 		case WebAuthEvent:
 			a.store.WriteString(loginMethodPrefKey, loginMethodWeb)
 			requestBackend(e)
@@ -1337,4 +1365,10 @@ func (a *App) getInterfaces() ([]interfaces.Interface, error) {
 func fatalErr(err error) {
 	// TODO: expose in UI.
 	log.Printf("fatal error: %v", err)
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

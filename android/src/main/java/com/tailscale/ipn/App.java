@@ -24,6 +24,10 @@ import android.content.pm.Signature;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
+import android.net.NetworkInfo;
+import android.net.NetworkRequest;
 import android.net.Uri;
 import android.net.VpnService;
 import android.view.View;
@@ -77,6 +81,9 @@ public class App extends Application {
 
 	private final static Handler mainHandler = new Handler(Looper.getMainLooper());
 
+	public DnsConfig dns = new DnsConfig(this);
+	public DnsConfig getDnsConfigObj() { return this.dns; }
+
 	@Override public void onCreate() {
 		super.onCreate();
 		// Load and initialize the Go library.
@@ -90,13 +97,27 @@ public class App extends Application {
 	}
 
 	private void registerNetworkCallback() {
-		BroadcastReceiver connectivityChanged = new BroadcastReceiver() {
-			@Override public void onReceive(Context ctx, Intent intent) {
-				boolean noconn = intent.getBooleanExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY, false);
-				onConnectivityChanged(!noconn);
+		ConnectivityManager cMgr = (ConnectivityManager) this.getSystemService(Context.CONNECTIVITY_SERVICE);
+		cMgr.registerNetworkCallback(new NetworkRequest.Builder().build(), new ConnectivityManager.NetworkCallback() {
+			private void reportConnectivityChange() {
+				NetworkInfo active = cMgr.getActiveNetworkInfo();
+				// https://developer.android.com/training/monitoring-device-state/connectivity-status-type
+				boolean isConnected = active != null && active.isConnectedOrConnecting();
+				onConnectivityChanged(isConnected);
 			}
-		};
-		registerReceiver(connectivityChanged, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+
+			@Override
+			public void onLost(Network network) {
+				super.onLost(network);
+				this.reportConnectivityChange();
+			}
+
+			@Override
+			public void onLinkPropertiesChanged(Network network, LinkProperties linkProperties) {
+				super.onLinkPropertiesChanged(network, linkProperties);
+				this.reportConnectivityChange();
+			}
+		});
 	}
 
 	public void startVPN() {

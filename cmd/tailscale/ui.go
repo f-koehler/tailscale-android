@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/f32"
@@ -48,6 +49,8 @@ type UI struct {
 	enabled widget.Bool
 	search  widget.Editor
 
+	exitLAN widget.Bool
+
 	// webSigin is the button for the web-based sign-in flow.
 	webSignin widget.Clickable
 
@@ -70,6 +73,9 @@ type UI struct {
 		list    layout.List
 	}
 
+	showDebugMenu bool
+	runningExit   bool // are we an exit node now?
+
 	intro struct {
 		list  layout.List
 		start widget.Clickable
@@ -83,6 +89,8 @@ type UI struct {
 
 		copy   widget.Clickable
 		reauth widget.Clickable
+		bug    widget.Clickable
+		beExit widget.Clickable
 		exits  widget.Clickable
 		logout widget.Clickable
 	}
@@ -259,7 +267,11 @@ func (ui *UI) layout(gtx layout.Context, sysIns system.Insets, state *clientStat
 
 	for _, e := range ui.search.Events() {
 		if _, ok := e.(widget.ChangeEvent); ok {
-			events = append(events, SearchEvent{Query: ui.search.Text()})
+			text := ui.search.Text()
+			if strings.EqualFold(text, "debug") {
+				ui.showDebugMenu = true
+			}
+			events = append(events, SearchEvent{Query: text})
 			break
 		}
 	}
@@ -293,6 +305,9 @@ func (ui *UI) layout(gtx layout.Context, sysIns system.Insets, state *clientStat
 	} else {
 		d.exits.Value = string(exitID)
 	}
+	if ui.exitLAN.Changed() {
+		events = append(events, ExitAllowLANEvent(ui.exitLAN.Value))
+	}
 
 	if ui.googleSignin.Clicked() {
 		ui.signinType = googleSignin
@@ -311,6 +326,21 @@ func (ui *UI) layout(gtx layout.Context, sysIns system.Insets, state *clientStat
 
 	if ui.menuClicked(&ui.menu.reauth) {
 		events = append(events, ReauthEvent{})
+	}
+
+	if ui.menuClicked(&ui.menu.bug) {
+		events = append(events, BugEvent{})
+		ui.showCopied(gtx, "bug report marker to clipboard")
+	}
+
+	if ui.menuClicked(&ui.menu.beExit) {
+		ui.runningExit = !ui.runningExit
+		events = append(events, BeExitNodeEvent(ui.runningExit))
+		if ui.runningExit {
+			ui.showMessage(gtx, "Running exit node")
+		} else {
+			ui.showMessage(gtx, "Stopped running exit node")
+		}
 	}
 
 	if ui.menuClicked(&ui.menu.exits) || ui.openExitDialog.Clicked() {
@@ -868,12 +898,20 @@ func (ui *UI) layoutExitNodeDialog(gtx layout.Context, sysIns system.Insets, exi
 					}),
 					layout.Flexed(1, func(gtx C) D {
 						gtx.Constraints.Min.Y = 0
-						// Add "none" exit node.
-						n := len(exits) + 1
+						// Add "none" exit node, then "Allow LAN" checkbox, then the exit nodes.
+						n := len(exits) + 2
 						return d.list.Layout(gtx, n, func(gtx C, idx int) D {
+							if idx == 0 {
+								btn := material.CheckBox(ui.theme, &ui.exitLAN, "Allow LAN access")
+								return layout.Inset{
+									Right:  unit.Dp(16),
+									Left:   unit.Dp(16),
+									Bottom: unit.Dp(16),
+								}.Layout(gtx, btn.Layout)
+							}
 							node := Peer{Label: "None", Online: true}
-							if idx >= 1 {
-								node = exits[idx-1]
+							if idx >= 2 {
+								node = exits[idx-2]
 							}
 							lbl := node.Label
 							if !node.Online {
@@ -966,15 +1004,25 @@ func (ui *UI) layoutMenu(gtx layout.Context, sysIns system.Insets, expiry time.T
 		return layout.NE.Layout(gtx, func(gtx C) D {
 			menu := &ui.menu
 			items := []menuItem{
-				{title: "Copy My IP Address", btn: &menu.copy},
+				{title: "Copy my IP address", btn: &menu.copy},
 			}
 			if showExits {
 				items = append(items, menuItem{title: "Use exit node...", btn: &menu.exits})
 			}
 			items = append(items,
+				menuItem{title: "Bug report", btn: &menu.bug},
 				menuItem{title: "Reauthenticate", btn: &menu.reauth},
 				menuItem{title: "Log out", btn: &menu.logout},
 			)
+			if ui.runningExit || ui.showDebugMenu {
+				var title string
+				if ui.runningExit {
+					title = "Stop running exit node [BETA]"
+				} else {
+					title = "Run exit node [BETA]"
+				}
+				items = append(items, menuItem{title: title, btn: &menu.beExit})
+			}
 			return layoutMenu(ui.theme, gtx, items, func(gtx C) D {
 				var expiryStr string
 				const fmtStr = time.Stamp

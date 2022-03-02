@@ -22,12 +22,12 @@ TAILSCALE_COMMIT=$(shell echo $(TAILSCALE_VERSION) | cut -d - -f 2 | cut -d t -f
 VERSIONCODE=$(lastword $(shell grep versionCode android/build.gradle))
 VERSIONCODE_PLUSONE=$(shell expr $(VERSIONCODE) + 1)
 
-# When you update TOOLCHAINREV, also update TOOLCHAINWANT
-TOOLCHAINREV=7037d3ea514849c335b5c34d1f7e9380d17bd974
+TOOLCHAINREV=$(shell go run tailscale.com/cmd/printdep --go)
 TOOLCHAINDIR=${HOME}/.cache/tailscale-android-go-$(TOOLCHAINREV)
-TOOLCHAINSUM=$(shell find $(TOOLCHAINDIR) -type f -print0 | sort -z | xargs -0 sha1sum | sha1sum | cut -d" " -f1)
-TOOLCHAINWANT=1d3aded66a653a1d63c8a12952bd82327903a107
+TOOLCHAINSUM=$(shell $(TOOLCHAINDIR)/go/bin/go version >/dev/null && echo "okay" || echo "bad")
+TOOLCHAINWANT=okay
 export PATH := $(TOOLCHAINDIR)/go/bin:$(PATH)
+export GOROOT := # Unset
 
 all: $(APK)
 
@@ -37,16 +37,17 @@ tag_release:
 	git commit -sm "android: bump version code" android/build.gradle
 	git tag -a "$(VERSION_LONG)"
 
+bumposs: toolchain
+	GOPROXY=direct go get tailscale.com@main
+	go mod tidy -compat=1.17
+
 toolchain:
 ifneq ($(TOOLCHAINWANT),$(TOOLCHAINSUM))
 	@echo want: $(TOOLCHAINWANT)
 	@echo got: $(TOOLCHAINSUM)
 	rm -rf ${HOME}/.cache/tailscale-android-go-*
-	$(eval tmpfile=$(shell mktemp --suffix=.tgz))
-	wget https://github.com/tailscale/go/releases/download/build-$(TOOLCHAINREV)/linux.tar.gz -O "$(tmpfile)"
 	mkdir -p $(TOOLCHAINDIR)
-	tar xzf $(tmpfile) -C $(TOOLCHAINDIR)
-	rm $(tmpfile)
+	curl --silent -L $(shell go run tailscale.com/cmd/printdep --go-url) | tar -C $(TOOLCHAINDIR) -zx
 endif
 
 $(DEBUG_APK): toolchain
@@ -54,12 +55,25 @@ $(DEBUG_APK): toolchain
 	go run gioui.org/cmd/gogio -buildmode archive -target android -appid $(APPID) -o $(AAR) github.com/tailscale/tailscale-android/cmd/tailscale
 	(cd android && ./gradlew assemblePlayDebug)
 	mv android/build/outputs/apk/play/debug/android-play-debug.apk $@
-	
+
+rundebug: $(DEBUG_APK)
+	adb install -r $(DEBUG_APK)
+	adb shell am start -n com.tailscale.ipn/com.tailscale.ipn.IPNActivity
+
+# tailscale-fdroid.apk builds a non-Google Play SDK, without the Google bits.
+# This is effectively what the F-Droid build definition produces.
+# This is useful for testing on e.g. Amazon Fire Stick devices.
+tailscale-fdroid.apk: toolchain
+	mkdir -p android/libs
+	go run gioui.org/cmd/gogio -buildmode archive -target android -appid $(APPID) -o $(AAR) github.com/tailscale/tailscale-android/cmd/tailscale
+	(cd android && ./gradlew assembleFdroidDebug)
+	mv android/build/outputs/apk/fdroid/debug/android-fdroid-debug.apk $@
+
 # This target is also used by the F-Droid builder.
 release_aar: toolchain
 release_aar:
 	mkdir -p android/libs
-	go run gioui.org/cmd/gogio -ldflags "-X tailscale.com/version.Long=$(VERSIONNAME) -X tailscale.com/version.Short=$(VERSIONNAME_SHORT) -X tailscale.com/version.GitCommit=$(TAILSCALE_COMMIT) -X tailscale.com/version.ExtraGitCommit=$(OUR_VERSION)" -tags xversion -buildmode archive -target android -appid $(APPID) -o $(AAR) github.com/tailscale/tailscale-android/cmd/tailscale
+	go run gioui.org/cmd/gogio -ldflags "-X tailscale.com/version.Long=$(VERSIONNAME) -X tailscale.com/version.Short=$(VERSIONNAME_SHORT) -X tailscale.com/version.GitCommit=$(TAILSCALE_COMMIT) -X tailscale.com/version.ExtraGitCommit=$(OUR_VERSION)" -buildmode archive -target android -appid $(APPID) -o $(AAR) github.com/tailscale/tailscale-android/cmd/tailscale
 
 $(RELEASE_AAB): release_aar
 	(cd android && ./gradlew bundlePlayRelease)
