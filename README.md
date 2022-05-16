@@ -23,7 +23,7 @@ This repository contains the open source Tailscale Android client.
 SDK](https://developer.android.com/studio/releases/platform-tools), 
 the [Android NDK](https://developer.android.com/ndk) are required.
 
-```
+```sh
 $ make tailscale-debug.apk
 $ adb install -r tailscale-debug.apk
 ```
@@ -31,9 +31,17 @@ $ adb install -r tailscale-debug.apk
 The `dockershell` target builds a container with the necessary
 dependencies and runs a shell inside it.
 
-```
+```sh
 $ make dockershell
 # make tailscale-debug.apk
+```
+
+If you have Nix 2.4 or later installed, a Nix development environment can
+be set up with
+
+```sh
+$ alias nix='nix --extra-experimental-features "nix-command flakes"'
+$ nix develop
 ```
 
 Use `make tag_release` to bump the Android version code, update the version
@@ -74,6 +82,33 @@ system-level Google sign-in option (the one that pops up a
 system-level UI to select your Google account). You can work around
 this by selecting "Other" at the sign-in screen, and then selecting
 Google from the next screen.
+
+## Developing on a Fire Stick TV
+
+On the Fire Stick:
+
+* Settings > My Fire TV > Developer Options > ADB Debugging > ON
+
+Then some useful commands:
+```
+adb connect 10.2.200.213:5555
+adb install -r tailscale-fdroid.apk
+adb shell am start -n com.tailscale.ipn/com.tailscale.ipn.IPNActivity
+adb shell pm uninstall com.tailscale.ipn
+```
+
+## Building on macOS
+
+To build from the CLI on macOS:
+
+1. Install Android Studio
+2. In Android Studio's home screen: "More Actions" > "SDK Manager", install NDK.
+3. You can now close Android Studio, unless you want it to create virtual devices
+   ("More Actions" > "Virtual Device Manager").
+4. Then, from CLI:
+5. `export JAVA_HOME='/Applications/Android Studio.app/Contents/jre/Contents/Home'`
+6. `export ANDROID_SDK_ROOT=$HOME/Library/Android/sdk`
+7. `make tailscale-fdroid.apk`, etc
 
 ## Bugs
 

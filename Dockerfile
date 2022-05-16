@@ -24,9 +24,9 @@ RUN curl -O https://dl.google.com/android/repository/sdk-tools-linux-3859397.zip
 RUN echo '444e22ce8ca0f67353bda4b85175ed3731cae3ffa695ca18119cbacef1c1bea0  sdk-tools-linux-3859397.zip' | sha256sum -c
 RUN unzip sdk-tools-linux-3859397.zip
 RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager --update
-RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'platforms;android-30'
+RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'platforms;android-31'
 RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'extras;android;m2repository'
-RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'ndk;20.0.5594570'
+RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'ndk;23.1.7779620'
 RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'platform-tools'
 RUN echo y | $ANDROID_HOME/tools/bin/sdkmanager 'build-tools;28.0.3'
 

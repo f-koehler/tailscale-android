@@ -11,6 +11,7 @@ import android.app.Fragment;
 import android.app.FragmentTransaction;
 import android.app.NotificationChannel;
 import android.app.PendingIntent;
+import android.app.UiModeManager;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -21,6 +22,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageInfo;
 import android.content.pm.Signature;
+import android.content.res.Configuration;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.net.ConnectivityManager;
@@ -54,6 +56,7 @@ import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -373,7 +376,7 @@ public class App extends Application {
                 try {
                     // Android doesn't have a supportsBroadcast() but the Go net.Interface wants
                     // one, so we say the interface has broadcast if it has multicast.
-                    sb.append(String.format("%s %d %d %b %b %b %b %b |", nif.getName(),
+                    sb.append(String.format(java.util.Locale.ROOT, "%s %d %d %b %b %b %b %b |", nif.getName(),
                                    nif.getIndex(), nif.getMTU(), nif.isUp(), nif.supportsMulticast(),
                                    nif.isLoopback(), nif.isPointToPoint(), nif.supportsMulticast()));
 
@@ -381,7 +384,7 @@ public class App extends Application {
                         // InterfaceAddress == hostname + "/" + IP
                         String[] parts = ia.toString().split("/", 0);
                         if (parts.length > 1) {
-                            sb.append(String.format("%s/%d ", parts[1], ia.getNetworkPrefixLength()));
+                            sb.append(String.format(java.util.Locale.ROOT, "%s/%d ", parts[1], ia.getNetworkPrefixLength()));
                         }
                     }
                 } catch (Exception e) {
@@ -393,4 +396,9 @@ public class App extends Application {
 
             return sb.toString();
         }
+
+	boolean isTV() {
+		UiModeManager mm = (UiModeManager)getSystemService(UI_MODE_SERVICE);
+		return mm.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+	}
 }

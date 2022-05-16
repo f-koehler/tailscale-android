@@ -25,6 +25,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/exp/shiny/materialdesign/icons"
 	"inet.af/netaddr"
 	"tailscale.com/client/tailscale/apitype"
@@ -75,6 +76,11 @@ type UI struct {
 
 	showDebugMenu bool
 	runningExit   bool // are we an exit node now?
+
+	qr struct {
+		show bool
+		op   paint.ImageOp
+	}
 
 	intro struct {
 		list  layout.List
@@ -245,22 +251,41 @@ func mulAlpha(c color.NRGBA, alpha uint8) color.NRGBA {
 }
 
 func (ui *UI) onBack() bool {
-	switch {
-	case ui.menu.show:
-		ui.menu.show = false
-		return true
-	case ui.shareDialog.show:
-		ui.shareDialog.show = false
-		return true
-	case ui.exitDialog.show:
-		ui.exitDialog.show = false
-		return true
+	b := ui.activeDialog()
+	if b == nil {
+		return false
 	}
-	return false
+	*b = false
+	return true
+}
+
+func (ui *UI) activeDialog() *bool {
+	switch {
+	case ui.qr.show:
+		return &ui.qr.show
+	case ui.menu.show:
+		return &ui.menu.show
+	case ui.shareDialog.show:
+		return &ui.shareDialog.show
+	case ui.exitDialog.show:
+		return &ui.exitDialog.show
+	}
+	return nil
 }
 
 func (ui *UI) layout(gtx layout.Context, sysIns system.Insets, state *clientState) []UIEvent {
+	// "Get started".
+	if ui.intro.show {
+		if ui.intro.start.Clicked() {
+			ui.store.WriteBool(keyShowIntro, false)
+			ui.intro.show = false
+		}
+		ui.layoutIntro(gtx, sysIns)
+		return nil
+	}
+
 	var events []UIEvent
+
 	if ui.enabled.Changed() {
 		events = append(events, ConnectEvent{Enable: ui.enabled.Value})
 	}
@@ -397,7 +422,14 @@ func (ui *UI) layout(gtx layout.Context, sysIns system.Insets, state *clientStat
 	const numHeaders = 6
 	n := numHeaders + len(state.Peers)
 	needsLogin := state.backend.State == ipn.NeedsLogin
-	ui.root.Layout(gtx, n, func(gtx C, idx int) D {
+	if !needsLogin {
+		ui.qr.show = false
+	}
+	rootGtx := gtx
+	if ui.activeDialog() != nil {
+		rootGtx.Queue = nil
+	}
+	ui.root.Layout(rootGtx, n, func(gtx C, idx int) D {
 		var in layout.Inset
 		if idx == n-1 {
 			// The last list element includes the bottom system
@@ -473,16 +505,18 @@ func (ui *UI) layout(gtx layout.Context, sysIns system.Insets, state *clientStat
 		ui.layoutMenu(gtx, sysIns, expiry, exitID != "" || len(state.backend.Exits) > 0)
 	}
 
-	// "Get started".
-	if ui.intro.show {
-		if ui.intro.start.Clicked() {
-			ui.store.WriteBool(keyShowIntro, false)
-			ui.intro.show = false
-		}
-		ui.layoutIntro(gtx, sysIns)
+	if ui.qr.show {
+		ui.layoutQR(gtx, sysIns)
 	}
 
 	return events
+}
+
+func (ui *UI) layoutQR(gtx layout.Context, sysIns system.Insets) layout.Dimensions {
+	fill{rgb(0x232323)}.Layout(gtx, gtx.Constraints.Max)
+	return layout.Center.Layout(gtx, func(gtx C) D {
+		return drawImage(gtx, ui.qr.op, unit.Dp(300))
+	})
 }
 
 func (ui *UI) FillShareDialog(targets []*apitype.FileTarget, err error) {
@@ -515,12 +549,22 @@ func (ui *UI) ShowMessage(msg string) {
 	ui.message.t0 = time.Now()
 }
 
+func (ui *UI) ShowQRCode(url string) {
+	ui.qr.show = true
+	q, err := qrcode.New(url, qrcode.Medium)
+	if err != nil {
+		fatalErr(err)
+		return
+	}
+	ui.qr.op = paint.NewImageOp(q.Image(512))
+}
+
 // Dismiss is a widget that detects pointer presses.
 type Dismiss struct {
 }
 
 func (d *Dismiss) Add(gtx layout.Context, color color.NRGBA) {
-	defer pointer.Rect(image.Rectangle{Max: gtx.Constraints.Min}).Push(gtx.Ops).Pop()
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Min}).Push(gtx.Ops).Pop()
 	pointer.InputOp{Tag: d, Types: pointer.Press}.Add(gtx.Ops)
 	paint.Fill(gtx.Ops, color)
 }
@@ -787,9 +831,8 @@ func (ui *UI) layoutShareDialog(gtx layout.Context, sysIns system.Insets) {
 						})
 						// Swallow clicks to title.
 						var c widget.Clickable
-						gtx.Constraints.Min = d.Size
-						c.Layout(gtx)
-						return d
+						gtx.Queue = nil
+						return c.Layout(gtx, func(gtx C) D { return d })
 					}),
 					layout.Rigid(func(gtx C) D {
 						if d.loaded {
@@ -1145,7 +1188,7 @@ func (ui *UI) layoutTop(gtx layout.Context, sysIns system.Insets, state *Backend
 						if state.State <= ipn.NeedsLogin {
 							return D{}
 						}
-						sw := material.Switch(ui.theme, &ui.enabled)
+						sw := material.Switch(ui.theme, &ui.enabled, "Enable VPN")
 						sw.Color.Enabled = rgb(white)
 						if state.State < ipn.Stopped {
 							sw.Color.Enabled = rgb(0xbbbbbb)
@@ -1167,7 +1210,7 @@ func (ui *UI) layoutTop(gtx layout.Context, sysIns system.Insets, state *Backend
 					if state.State <= ipn.NeedsLogin {
 						return D{}
 					}
-					btn := material.IconButton(ui.theme, &ui.menu.open, ui.icons.more)
+					btn := material.IconButton(ui.theme, &ui.menu.open, ui.icons.more, "Open menu")
 					btn.Color = rgb(white)
 					btn.Background = color.NRGBA{}
 					return btn.Layout(gtx)
