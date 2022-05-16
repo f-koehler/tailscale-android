@@ -142,7 +142,7 @@ func (b *backend) Start(notify func(n ipn.Notify)) error {
 
 	b.backend.SetNotifyCallback(notify)
 	prefs := ipn.NewPrefs()
-	prefs.ControlURL = "https://fkoehler.xyz:1443"
+	prefs.ControlURL = "https://vps.fkoehler.xyz:443"
 	opts := ipn.Options{
 		StateKey:    "ipn-android",
 		UpdatePrefs: prefs,
